@@ -1,5 +1,4 @@
 #%% BIBLIOTECAS
-
 import os
 import re
 import pandas as pd
@@ -15,8 +14,7 @@ from scipy.stats import pearsonr
 import patsy
 
 #%% CARREGAMENTO DOS DADOS
-
-arquivos_venda = os.scandir('''Diretório dos dados''') # Pasta onde estão arquivados os pdfs.
+arquivos_venda = os.scandir('C:/Users/enzoc/OneDrive/Documents/TCC/Vendas') # Pasta onde estão arquivados os arquivos .xls.
 
 def conversao(arquivos_venda): # Função de conversão dos arquivos.
     
@@ -24,9 +22,9 @@ def conversao(arquivos_venda): # Função de conversão dos arquivos.
 
     for arquivo in arquivos_venda: # Iteração sobre os arquivos da variável "arquivo_venda".
         
-        if arquivo.name.endswith('.xls'): # Procura apenas os arquivos pdf.
+        if arquivo.name.endswith('.xls'): # Procura apenas os arquivos .xls.
             
-            try: # Para certificar que o código não quebre caso existam outros arquivos avulsos ao formato pdf.
+            try: # Para certificar que o código não quebre caso algum arquivo .xls esteja corrompido ou ilegível.
                     vendas = pd.read_excel(
                         arquivo.path, 
                         engine='xlrd',
@@ -34,17 +32,16 @@ def conversao(arquivos_venda): # Função de conversão dos arquivos.
                     ) # Método da biblioteca Pandas de "upload" de dados de arquivos excel para o formato "DataFrame".
                     tabela_planilha.append(vendas) # Adiciona os dados da planilha atual ao final da lista "tabela_planilha".
             except Exception as e:
-                print(f"Erro ao ler o arquivo {arquivo.name}: {e}") # Alerta caso exista um arquivo que não seja um pdf.
+                print(f"Erro ao ler o arquivo {arquivo.name}: {e}") # Alerta caso algum arquivo .xls não possa ser lido.
 
     if not tabela_planilha:
-        raise ValueError("Nenhum arquivo .xls foi encontrado ou lido com sucesso na pasta.") ## Alerta caso não exista nenhum arquivo que não seja um pdf.
+        raise ValueError("Nenhum arquivo .xls foi encontrado ou lido com sucesso na pasta.") # Alerta caso nenhum arquivo .xls tenha sido lido.
         
     return pd.concat(tabela_planilha, ignore_index=True) # Resultado da função "conversao()".
     
 vendas_0 = conversao(arquivos_venda) # Planilha com os dados de venda sem tratamento.
 
 #%% VENDAS SIMPLIFICADAS
-
 vendas_1 = (vendas_0[[
     'Descrição',
     'Valor unitário',
@@ -70,7 +67,6 @@ vendas_2 = (
     ) # Renomeação das variáveis para facilitar a manipulação.
 
 #%% VARIÁVEIS DE TAMANHO, COR E NOME DO PRODUTO
-
 tamanhos = re.compile(
     r'^(PP|P|M|G|GG|GG1|GG2|GG3|GG4|XG|XXG|X1|X2|X3|X+G?|XX\d+|\d{2}|ÚNICO|U)$',
     re.IGNORECASE
@@ -1099,7 +1095,7 @@ vendas_6['cor'] = vendas_6['cor'].map(correcoes_cores) # Correção dos nomes.
 
 vendas_7_bi = vendas_6.copy() # Cópia do DF antigo
 
-vendas_7_bi['data'] = pd.to_datetime(vendas_7_bi['data']) # Alteração do tipo da variável para "datetime" do Pandas.
+vendas_7_bi['data'] = pd.to_datetime(vendas_7_bi['data'], dayfirst=True) # Alteração do tipo da variável para "datetime" do Pandas.
 
 dias_pt = {
     'Monday': 'Segunda-feira', 'Tuesday': 'Terça-feira', 'Wednesday': 'Quarta-feira',
@@ -1110,7 +1106,7 @@ vendas_7_bi['dia_da_semana'] = (
     vendas_7_bi['data']
     .dt.day_name()
     .map(dias_pt)
-    .upper()
+    .str.upper()
     ) # Criação da variável dos dias da semana, sua consequente tradução para português e alteração para caixa alta.
 
 vendas_7_bi['semana_do_mes'] = (vendas_7_bi['data'].dt.day - 1) // 7 + 1 # Criação da variável de semana do mês.
@@ -1192,11 +1188,14 @@ manter = [
     'SHORT SUPPLEX',
     'SHORT EMANA BASIC',
     'LEGGING SUPPLEX POCKET',
-    'BLUSA DRY RAGLNA',
+    'BLUSA DRY RAGLAN',
     'BLUSA DRY CLIPPING'
     ] # Lista para indicar quais produtos serão analisados pelo modelo de regressão para dados de contagem.
 
 vendas_7_reg = vendas_7_reg[vendas_7_reg['produto'].isin(manter)] # Aplicação da lista.
+
+nao_encontrados = set(manter) - set(vendas_7_reg['produto'].unique()) # Produtos da lista que não existem no DF (ex.: erro de digitação).
+print(f'Produtos da lista não encontrados no DF: {nao_encontrados if nao_encontrados else "nenhum"}') # Conferência.
 
 vendas_7_reg['cor'] = (
     vendas_7_reg['cor']
@@ -1213,8 +1212,14 @@ vendas_7_reg['ano'] = vendas_7_reg['data'].dt.year #  Criação da variável dos
 vendas_7_reg['data'] = vendas_7_reg['data'].dt.to_period('M').dt.to_timestamp() # Remove o dia da variável da data e mantém apenas mês e ano.
 
 #%% ZEROS
-
 vendas_8_reg = vendas_7_reg.copy() # Cópia do DF antigo
+
+total_vendas_inicial = vendas_8_reg['vendas'].sum() # Guarda o total de peças vendidas para conferência após o agrupamento.
+
+vendas_8_reg['desconto'] = vendas_8_reg['desconto'].fillna(0) # Venda sem desconto registrado é tratada como desconto 0.
+vendas_8_reg = vendas_8_reg[vendas_8_reg['desconto'] < 100] # Remove brindes/trocas (desconto de 100%), que impediriam o cálculo do preço sem desconto.
+
+vendas_8_reg['preco'] = vendas_8_reg['preco'] / (1 - (vendas_8_reg['desconto'] / 100)) # Altera os valores do DF para apresentar os preços sem desconto.
 
 vendas_8_reg['data'] = pd.to_datetime(vendas_8_reg['data']) # Transformação da data para o formato "date time" do Pandas.
 
@@ -1251,23 +1256,33 @@ vendas_8_reg = (
     )
 )
 
-# Calcula o maior preço histórico para cada grupo de chaves.
-precos_maximos = (
-    vendas_8_reg
-    .dropna(subset=['preco']) # Descarta linhas onde o preço está vazio (NaN).
-    .groupby(chaves)['preco'] # Agrupa pelas chaves e seleciona a coluna 'preco'.
-    .max() # Encontra o maior preço registrado para cada grupo.
-    .reset_index() # Converte os grupos do índice de volta em colunas.
-    .rename(columns={'preco': 'preco_maximo'}) # Renomeia a coluna 'preco' para 'preco_maximo'.
+# Cria colunas numéricas de ano e mês (necessárias para a imputação de preço e desconto).
+vendas_8_reg['data'] = pd.to_datetime(vendas_8_reg['data']) # Garante o formato "date time" após o "explode".
+vendas_8_reg['ano'] = vendas_8_reg['data'].dt.year # Extrai o número do ano da data.
+vendas_8_reg['mes'] = vendas_8_reg['data'].dt.month # Extrai o número do mês (1 a 12) da data.
+
+# Calcula a mediana de preço de cada grupo de chaves no ano e em todo o histórico.
+mediana_ano = vendas_8_reg.groupby(chaves + ['ano'])['preco'].transform('median') # Mediana do preço da variante no mesmo ano.
+mediana_vida = vendas_8_reg.groupby(chaves)['preco'].transform('median') # Mediana do preço da variante em todo o histórico.
+
+# Preenche os preços vazios usando a mediana calculada.
+vendas_8_reg['preco'] = (
+    vendas_8_reg['preco']
+    .fillna(mediana_ano) # Substitui preços NaN pela mediana do ano.
+    .fillna(mediana_vida) # Caso a variante não tenha vendido no ano, usa a mediana histórica.
 )
 
-# Preenche os preços vazios usando o preço máximo calculado
-vendas_8_reg = vendas_8_reg.merge(precos_maximos, on=chaves, how='left') # Traz a coluna 'preco_maximo' para a tabela principal.
-vendas_8_reg['preco'] = vendas_8_reg['preco'].fillna(vendas_8_reg['preco_maximo'])  # Subtitui preços NaN pelo 'preco_maximo'.
-vendas_8_reg = vendas_8_reg.drop(columns=['preco_maximo']) # Remove a coluna auxiliar 'preco_maximo'.
+# Calcula a mediana de desconto praticado no mês.
+desconto_produto_mes = vendas_8_reg.groupby(['produto', 'ano', 'mes'])['desconto'].transform('median') # Desconto do mesmo produto (outras cores/tamanhos) no mês.
+desconto_loja_mes = vendas_8_reg.groupby(['ano', 'mes'])['desconto'].transform('median') # Desconto geral da loja no mês.
 
-# Substitui descontos vazios (meses criados sem vendas) por 0.
-vendas_8_reg['desconto'] = vendas_8_reg['desconto'].fillna(0)  # Onde 'desconto' for NaN, coloca 0.
+# Preenche os descontos vazios (meses criados sem vendas) usando as medianas calculadas.
+vendas_8_reg['desconto'] = (
+    vendas_8_reg['desconto']
+    .fillna(desconto_produto_mes) # Onde 'desconto' for NaN, usa o desconto do mesmo produto no mês.
+    .fillna(desconto_loja_mes) # Caso nenhuma variante do produto tenha vendido, usa o desconto geral da loja no mês.
+    .fillna(0) # Caso a loja não tenha vendido nada no mês, coloca 0.
+)
 
 # Define a lista de colunas cadastrais que serão tratadas.
 colunas_cadastro = ['familia', 'categoria']
@@ -1287,10 +1302,6 @@ vendas_8_reg[colunas_cadastro] = (
     .bfill() # Preenche para trás caso a primeira linha do histórico esteja em branco.
 )
 
-# Cria colunas numéricas de ano e mês.
-vendas_8_reg['ano'] = vendas_8_reg['data'].dt.year # Extrai o número do ano da data.
-vendas_8_reg['mes'] = vendas_8_reg['data'].dt.month # Extrai o número do mês (1 a 12) da data.
-
 # Ajusta vendas vazias para zero
 vendas_8_reg['vendas'] = vendas_8_reg['vendas'].fillna(0) # Substitui a quantidade de vendas NaN por 0.
 
@@ -1301,19 +1312,38 @@ vendas_8_reg = (
     .reset_index(drop=True)          # Redefine os números do índice de 0 em diante e descarta os antigos.
 )
 
-#%% AGREGAÇÃO
+#%% AGRUPAMENTO
 
+# Calcula os totais ponderados pela quantidade vendida.
+vendas_8_reg['preco_x_vendas'] = vendas_8_reg['preco'] * vendas_8_reg['vendas'] # Preço multiplicado pela quantidade.
+vendas_8_reg['desconto_x_vendas'] = vendas_8_reg['desconto'] * vendas_8_reg['vendas'] # Desconto multiplicado pela quantidade.
+
+# Agrupa por variante e mês.
 vendas_9_reg = (
-    vendas_8_reg.groupby(
-        ['produto', 'familia', 'categoria', 'mes', 'ano', 'preco', 'desconto', 'tamanho', 'cor'],
-        as_index=False
-    )['vendas']
-    .sum()
-) # Soma a quantidade de vendas de cada observação repetida.
+    vendas_8_reg
+    .groupby(chaves + ['familia', 'categoria', 'ano', 'mes'], as_index=False, dropna=False) # Uma linha por variante em cada mês (dropna=False evita descartar linhas com cadastro vazio sem aviso).
+    .agg(
+        vendas=('vendas', 'sum'), # Soma a quantidade vendida no mês.
+        preco_x_vendas=('preco_x_vendas', 'sum'), # Soma do preço ponderado.
+        desconto_x_vendas=('desconto_x_vendas', 'sum'), # Soma do desconto ponderado.
+        preco_simples=('preco', 'mean'), # Média simples (usada nos meses sem venda).
+        desconto_simples=('desconto', 'mean') # Média simples (usada nos meses sem venda).
+    )
+)
+
+# Calcula as médias ponderadas; nos meses sem venda (peso zero), usa o valor imputado.
+tem_venda = vendas_9_reg['vendas'] > 0 # Identifica os meses com venda.
+vendas_9_reg['preco'] = np.where(tem_venda, vendas_9_reg['preco_x_vendas'] / vendas_9_reg['vendas'].where(tem_venda), vendas_9_reg['preco_simples']) # Preço médio ponderado.
+vendas_9_reg['desconto'] = np.where(tem_venda, vendas_9_reg['desconto_x_vendas'] / vendas_9_reg['vendas'].where(tem_venda), vendas_9_reg['desconto_simples']) # Desconto médio ponderado.
+
+# Remove as colunas auxiliares.
+vendas_9_reg = vendas_9_reg.drop(columns=['preco_x_vendas', 'desconto_x_vendas', 'preco_simples', 'desconto_simples'])
+
+# Conferência: nenhuma venda pode ter se perdido no merge com a grade ou no agrupamento.
+print(f"Total de peças antes: {total_vendas_inicial:.0f} | depois: {vendas_9_reg['vendas'].sum():.0f}") # Os dois totais devem ser iguais.
 
 #%% CLIMA
-
-clima = pd.read_excel('''Diretório dos dados''') # Diretório da planilha do clima.
+clima = pd.read_excel('C:/Users/enzoc/OneDrive/Documents/TCC/Clima/PELOTAS_2021-2026.xlsx') # Diretório da planilha do clima.
 
 clima = (
     clima
@@ -1327,7 +1357,9 @@ clima = (
         'Hora UTC'})
         ) # Remoção da coluna de hora e renomeação de data, temperatura e precipitação.
 
-clima['data'] = pd.to_datetime(clima['data']) # conversão da coluna "clima" para "datetime".
+clima = clima.replace(-9999, np.nan) # Converte o código de dado ausente do INMET em NaN.
+
+clima['data'] = pd.to_datetime(clima['data']) # Conversão da coluna "data" para "datetime".
 
 clima['mes'] = clima['data'].dt.month # Criação da coluna de meses.
 
@@ -1336,16 +1368,16 @@ clima['ano'] = clima['data'].dt.year # Criação da coluna de anos.
 clima_diario = (
     clima.groupby(['data', 'mes', 'ano'])
     .agg(temperatura=('temperatura', 'mean'),
-         precipitacao=('precipitacao', 'sum'))
+         precipitacao=('precipitacao', lambda x: x.sum(min_count=1))) # Dia sem nenhuma medição fica NaN, e não 0.
     .reset_index()
-) # Agrupando por ano, mês e data, criando a média de temperatura e precipitação diária.
+) # Agrupando por data, criando a temperatura média e a precipitação total de cada dia (mm/dia).
 
 clima_mensal = (
     clima_diario.groupby(['mes', 'ano'])
     .agg(temperatura=('temperatura', 'mean'),
          precipitacao=('precipitacao', 'mean'))
     .reset_index()
-) # Agrupando por ano, mês e data, criando a média de temperatura e precipitação mensal.
+) # Agrupando por mês e ano, criando a temperatura média mensal e a precipitação média diária do mês (mm/dia).
 
 vendas_9_reg = (
     vendas_9_reg
@@ -1358,11 +1390,9 @@ vendas_10_reg = vendas_9_reg.copy() # Cópia do DF antigo
 
 vendas_10_reg = vendas_10_reg.dropna(subset=['vendas', 'familia', 'mes', 'preco', 'desconto', 'temperatura', 'precipitacao']) # Exclusão de linhas vazias.
 
-vendas_10_reg['preco'] = vendas_10_reg['preco'] / (1 - (vendas_10_reg['desconto'] / 100)) # Altera os valores do DF para apresentar os preços sem desconto.
-
 vendas_10_reg = vendas_10_reg.astype({
     'vendas': 'int',
-    'produto': 'object',
+    'produto': 'category',
     'familia': 'category',
     'tamanho': 'category',
     'cor': 'category',
@@ -1393,8 +1423,8 @@ vendas_10_reg = vendas_10_reg[[
 #%% ANÁLISE INICIAL
  
 mean_v = vendas_10_reg['vendas'].mean() # Média de vendas do produto.
-var_v  = vendas_10_reg['vendas'].var() # Variação de vendas do produto.
-assimetria = stats.skew(vendas_10_reg['vendas']) # Assimatria da distribuição.
+var_v  = vendas_10_reg['vendas'].var() # Variância de vendas do produto.
+assimetria = stats.skew(vendas_10_reg['vendas']) # Assimetria da distribuição.
 curtose    = stats.kurtosis(vendas_10_reg['vendas']) # Curtose da distribuição.
 pct_zeros = (vendas_10_reg['vendas']==0).mean() # Porcetagem de zeros que compõem a distribuição.
  
@@ -1491,12 +1521,79 @@ vendas_10_reg.info()
 print()
 vendas_10_reg.describe()
 
+#%% MULTICOLINEARIDADE (VIF)
+
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+formula = 'vendas ~ produto + tamanho + cor + categoria + preco + desconto + mes + temperatura + precipitacao' # Fórmula usada em todos os modelos.
+
+X_vif = patsy.dmatrix(formula.split('~')[1], data=vendas_10_reg, return_type='dataframe') # Matriz de variáveis explicativas (com as "dummies").
+
+vif = pd.DataFrame({
+    'Variável': X_vif.columns,
+    'VIF': [variance_inflation_factor(X_vif.values, i) for i in range(X_vif.shape[1])]
+}).query("Variável != 'Intercept'") # Calcula o VIF de cada coluna, exceto o intercepto.
+
+print("===== VIF DAS VARIÁVEIS NUMÉRICAS =====")
+print(vif[vif['Variável'].isin(['preco', 'desconto', 'temperatura', 'precipitacao'])].round(2).to_string(index=False)) # VIF das variáveis numéricas.
+print()
+print("===== 10 MAIORES VIFs (INCLUINDO DUMMIES) =====")
+print(vif.sort_values('VIF', ascending=False).head(10).round(2).to_string(index=False)) # Valores acima de 10 indicam multicolinearidade severa.
+
+#%% TEMPERATURA x MESES
+
+formulas_teste = {
+    'Completo': formula,
+    'Sem temperatura': formula.replace(' + temperatura', ''),
+    'Sem meses': formula.replace(' + mes', '')
+} # Modelos alternativos para avaliar a colinearidade entre mês e temperatura.
+
+print("===== COMPARAÇÃO: TEMPERATURA x MESES (BNEG) =====")
+for nome, f in formulas_teste.items():
+    m = sm.NegativeBinomial.from_formula(f, data=vendas_10_reg).fit(maxiter=1000, disp=False) # Ajusta cada versão do modelo.
+    print(f'  {nome:16s} AIC: {m.aic:,.2f} | BIC: {m.bic:,.2f}') # Menor AIC/BIC indica o melhor modelo.
+
+# Caso "Sem temperatura" (ou "Sem meses") tenha o menor AIC/BIC, redefina a fórmula abaixo e rode novamente a partir da célula do VIF:
+formula = formulas_teste['Sem temperatura'] # Temperatura removida: não significativa, colinear com os meses e com menor AIC/BIC sem ela.
+
+#%% MODELO POISSON E TESTE DE SUPERDISPERSÃO
+
+modelo_poisson = sm.Poisson.from_formula(formula, data=vendas_10_reg).fit(maxiter=1000) # Modelo Poisson como referência.
+
+print(modelo_poisson.summary()) # Resumo do Modelo Poisson.
+
+# Teste de superdispersão de Cameron e Trivedi (1990).
+mu_poisson = modelo_poisson.predict() # Médias previstas pelo Poisson.
+y = vendas_10_reg['vendas'] # Vendas observadas.
+y_aux = ((y - mu_poisson) ** 2 - y) / mu_poisson # Variável dependente da regressão auxiliar.
+teste_ct = sm.OLS(y_aux, mu_poisson).fit() # Regressão auxiliar sem intercepto.
+
+print("\n===== TESTE DE SUPERDISPERSÃO (CAMERON E TRIVEDI) =====")
+print(f"  Coeficiente: {teste_ct.params.iloc[0]:.4f}")
+print(f"  Estatística t: {teste_ct.tvalues.iloc[0]:.4f}")
+print(f"  p-valor: {teste_ct.pvalues.iloc[0]:.4f}" if teste_ct.pvalues.iloc[0] >= 0.001 else "  p-valor: < 0,001")
+print("  Resultado: há superdispersão (BNEG é mais adequado que o Poisson)." if (teste_ct.pvalues.iloc[0] < 0.05 and teste_ct.params.iloc[0] > 0) else "  Resultado: não há evidência de superdispersão (Poisson é adequado).")
+
 #%% MODELO BNEG (COMPLETO)
 
-modelo_bneg = sm.NegativeBinomial.from_formula('vendas ~ produto + tamanho + cor + categoria + preco + desconto + mes + temperatura + precipitacao', data=vendas_10_reg).fit(maxiter=1000)
+grupos = vendas_10_reg.groupby(['produto', 'cor', 'tamanho'], observed=True).ngroup() # Identificador de cada variante, usado para agrupar os erros-padrão.
 
+modelo_bneg = sm.NegativeBinomial.from_formula(formula, data=vendas_10_reg).fit(
+    maxiter=1000,
+    cov_type='cluster', # Erros-padrão robustos agrupados por variante (as mesmas variantes aparecem em vários meses).
+    cov_kwds={'groups': grupos}
+    )
 
-modelo_bneg.summary() # Resumo do Modelo BNEG.
+print(modelo_bneg.summary()) # Resumo do Modelo BNEG.
+
+# Teste de razão de verossimilhança Poisson x BNEG (testa se alpha > 0).
+LR_alpha = 2 * (modelo_bneg.llf - modelo_poisson.llf) # Estatística LR.
+p_alpha = 0.5 * chi2.sf(LR_alpha, 1) # P-valor corrigido, pois alpha = 0 está no limite do espaço paramétrico.
+
+print("\n===== TESTE LR: POISSON x BNEG =====")
+print(f"  Alpha: {modelo_bneg.params['alpha']:.4f}")
+print(f"  LR: {LR_alpha:.4f}")
+print(f"  p-valor: {p_alpha:.4f}" if p_alpha >= 0.001 else "  p-valor: < 0,001")
 
 #%% ANÁLISE DO MODELO
 
@@ -1505,13 +1602,13 @@ df_coefs = pd.DataFrame({
     'P-Value': modelo_bneg.pvalues
 }) # Coeficientes e valores-P.
 
-variaveis_numericas = ['preco', 'desconto', 'temperatura', 'precipitacao'] # Seleciona as variáveis numéricas.
+variaveis_numericas = [v for v in ['preco', 'desconto', 'temperatura', 'precipitacao'] if v in modelo_bneg.params.index] # Seleciona as variáveis numéricas presentes no modelo.
 df_filtrado = df_coefs.loc[variaveis_numericas].copy() # Cria uma cópia independente de df_coefs contendo apenas as linhas cujos índices correspondem à lista de variáveis numéricas.
 
 df_filtrado['Multiplicador (IRR)'] = np.exp(df_filtrado['Coeficiente Original']) # Converte o coeficiente da regressão (log-linear ou logística) da escala logarítmica para a escala original (razão de taxas/razão de chances - IRR).
 df_filtrado['Impacto Percentual (%)'] = (df_filtrado['Multiplicador (IRR)'] - 1) * 100 # Transforma o multiplicador na variação percentual direta que cada unidade da variável causa nas vendas.
 
-print("===== IMPACTO DAS VARIÁVEIS NUMÉRICAS NAS VENDAS =====") 
+print("===== IMPACTO DAS VARIÁVEIS NUMÉRICAS NAS VENDAS (BNEG) =====") 
 print(df_filtrado[['Coeficiente Original', 'Impacto Percentual (%)']].to_string(formatters={
     'Coeficiente Original': '{:,.4f}'.format,
     'Impacto Percentual (%)': '{:+.2f}%'.format
@@ -1519,12 +1616,18 @@ print(df_filtrado[['Coeficiente Original', 'Impacto Percentual (%)']].to_string(
 #%% ZINB (COMPLETO)
 
 modelo_zinb = sm.ZeroInflatedNegativeBinomialP.from_formula(
-    'vendas ~ produto + tamanho + cor + categoria + preco + desconto + mes + temperatura + precipitacao',
+    formula,
     data=vendas_10_reg,
-    exog_infl=vendas_10_reg[['preco']]
-    ).fit(maxiter=2000) # Modelo ZINB com 2000 iterações para alcançar a convergência.
+    exog_infl=sm.add_constant(vendas_10_reg[['preco']]) # Parte de inflação com intercepto.
+    ).fit(
+        maxiter=2000,
+        cov_type='cluster', # Erros-padrão agrupados por variante, como no BNEG.
+        cov_kwds={'groups': grupos}
+        ) # Modelo ZINB com 2000 iterações para alcançar a convergência.
 
 print(modelo_zinb.summary()) # Resumo do Modelo
+
+print(f"Convergiu: {modelo_zinb.mle_retvals['converged']} | Erros-padrão vazios: {modelo_zinb.bse.isna().any()}") # Conferência do aviso "Inverting hessian failed".
 
 #%% ANÁLISE DO MODELO
 
@@ -1533,13 +1636,13 @@ df_coefs_zinb = pd.DataFrame({
     'P-Value': modelo_zinb.pvalues
 }) # Coeficientes e valores-P.
 
-variaveis_numericas = ['preco', 'desconto', 'temperatura', 'precipitacao'] # Seleciona as variáveis numéricas.
-df_filtrado = df_coefs.loc[variaveis_numericas].copy() # Cria uma cópia independente de df_coefs contendo apenas as linhas cujos índices correspondem à lista de variáveis numéricas.
+variaveis_numericas = [v for v in ['preco', 'desconto', 'temperatura', 'precipitacao'] if v in modelo_zinb.params.index] # Seleciona as variáveis numéricas presentes no modelo.
+df_filtrado = df_coefs_zinb.loc[variaveis_numericas].copy() # Cria uma cópia independente de df_coefs_zinb contendo apenas as linhas cujos índices correspondem à lista de variáveis numéricas.
 
 df_filtrado['Multiplicador (IRR)'] = np.exp(df_filtrado['Coeficiente Original']) # Converte o coeficiente da regressão (log-linear ou logística) da escala logarítmica para a escala original (razão de taxas/razão de chances - IRR).
 df_filtrado['Impacto Percentual (%)'] = (df_filtrado['Multiplicador (IRR)'] - 1) * 100 # Transforma o multiplicador na variação percentual direta que cada unidade da variável causa nas vendas.
 
-print("===== IMPACTO DAS VARIÁVEIS NUMÉRICAS NAS VENDAS =====")
+print("===== IMPACTO DAS VARIÁVEIS NUMÉRICAS NAS VENDAS (ZINB) =====")
 print(df_filtrado[['Coeficiente Original', 'Impacto Percentual (%)']].to_string(formatters={
     'Coeficiente Original': '{:,.4f}'.format,
     'Impacto Percentual (%)': '{:+.2f}%'.format
@@ -1600,18 +1703,19 @@ print('                      MÉTRICAS DO MODELO BNEG:   |   MÉTRICAS DO MODELO
 print("=" * 80)
 print(f"  LL:                        {modelo_bneg.llf:.2f}           |          {modelo_zinb.llf:.2f}")
 print(f"  LL-Null:                   {modelo_bneg.llnull:.2f}           |          {modelo_zinb.llnull:.2f}")
-print(f"  LL R-squared:                {modelo_bneg.llr_pvalue:.4f}            |            {modelo_zinb.llr_pvalue:.4f}")
+print(f"  LLR p-valor:                 {modelo_bneg.llr_pvalue:.4f}            |            {modelo_zinb.llr_pvalue:.4f}")
 print(f"  Pseudo R-squared:            {modelo_bneg.prsquared:.4f}            |            {modelo_zinb.prsquared:.4f}")
 print(f"  AIC:                        {modelo_bneg.aic:.2f}           |           {modelo_zinb.aic:.2f}")
 print(f"  BIC:                        {modelo_bneg.bic:.2f}           |           {modelo_zinb.bic:.2f}")
 print("=" * 80)
 print('            TESTE DE VUONG:               |     RAZÃO DE VEROSSIMILHANÇA:')
 print('=' * 80)
-print(f"      Estatística de Vuong: {vuong_stat:.4f}        |            LR = {LR:.4f}")
+print(f"      Estatística de Vuong: {vuong_stat:.4f}       |            LR = {LR:.4f}")
 print(f"            p-valor: {p_val:.4f}               |               GL = {gl}")
+print(f"                                          |          p-valor = {p:.4f}")
 # Tomada de decisão estatística com base no p-valor e na estatística de Vuong
 if p_val > 0.05:
-    print("        Resultado:Não há diferença        |             p-valor = 1\n     estatisticamente significativa       |\n           entre os modelos.              |")
+    print("        Resultado: Não há diferença estatisticamente significativa entre os modelos.")
 elif vuong_stat > 0:
     print("Resultado: O Modelo Binomial Negativa (BNeg) é significativamente melhor.")
 else:
@@ -1622,10 +1726,68 @@ print("=" * 80)
 print(df_zeros.to_string(index=False))
 print("=" * 80)
 
+if LR < -1e-4: # Ignora diferenças numéricas desprezíveis.
+    print("ATENÇÃO: LR negativo. O ZINB deveria ter LL maior ou igual ao BNEG; isso indica que o componente de inflação convergiu para ~0 ou que o otimizador não atingiu o máximo.")
+
+#%% VALIDAÇÃO FORA DA AMOSTRA DO BNEG e ZINB (ÚLTIMOS 12 MESES)
+
+periodo = pd.to_datetime(dict(
+    year=vendas_10_reg['ano'].astype(int),
+    month=vendas_10_reg['mes'].astype(int),
+    day=1
+)) # Data de cada observação (primeiro dia do mês).
+
+corte = periodo.max() - pd.DateOffset(months=11) # Primeiro mês do período de teste.
+treino = vendas_10_reg[periodo < corte].copy() # Conjunto de treino.
+teste = vendas_10_reg[periodo >= corte].copy() # Conjunto de teste (últimos 12 meses).
+
+colunas_categoricas = ['produto', 'tamanho', 'cor', 'categoria', 'mes'] # Variáveis categóricas da fórmula.
+for coluna in colunas_categoricas:
+    treino[coluna] = treino[coluna].cat.remove_unused_categories() # Mantém apenas as categorias vistas no treino.
+    teste = teste[teste[coluna].isin(treino[coluna].cat.categories)] # Remove do teste categorias que o modelo nunca viu.
+    teste[coluna] = pd.Categorical(teste[coluna], categories=treino[coluna].cat.categories) # Alinha as categorias com o treino.
+
+modelo_bneg_treino = sm.NegativeBinomial.from_formula(formula, data=treino).fit(maxiter=1000, disp=False) # BNEG estimado só com o treino.
+
+modelo_zinb_treino = sm.ZeroInflatedNegativeBinomialP.from_formula(
+    formula,
+    data=treino,
+    exog_infl=sm.add_constant(treino[['preco']])
+    ).fit(maxiter=2000, disp=False) # ZINB estimado só com o treino.
+
+teste['previsto_bneg'] = modelo_bneg_treino.predict(teste) # Previsão do BNEG para cada variante nos meses de teste.
+teste['previsto_zinb'] = modelo_zinb_treino.predict(teste, exog_infl=sm.add_constant(teste[['preco']], has_constant='add')) # Previsão do ZINB.
+teste['periodo'] = periodo.loc[teste.index] # Período de cada linha do teste.
+
+mensal = teste.groupby('periodo')[['vendas', 'previsto_bneg', 'previsto_zinb']].sum() # Soma real e prevista por mês.
+
+def metricas(real, previsto): # Calcula MAE, RMSE, WAPE e viés das previsões mensais agregadas.
+    erro = real - previsto
+    return {
+        'MAE': erro.abs().mean(),
+        'RMSE': np.sqrt((erro ** 2).mean()),
+        'WAPE': erro.abs().sum() / real.sum(),
+        'Viés': (previsto.sum() - real.sum()) / real.sum() # Negativo: o modelo prevê abaixo do real.
+    }
+
+m_bneg = metricas(mensal['vendas'], mensal['previsto_bneg']) # Métricas do BNEG.
+m_zinb = metricas(mensal['vendas'], mensal['previsto_zinb']) # Métricas do ZINB.
+
+print("\n===== VALIDAÇÃO FORA DA AMOSTRA (ÚLTIMOS 12 MESES) =====")
+print(f"  Período de teste: {corte:%m/%Y} a {periodo.max():%m/%Y}")
+print(f"  Observações de teste: {len(teste)} (removidas por categoria nova: {int((periodo >= corte).sum()) - len(teste)})")
+print(f"                          BNEG   |    ZINB")
+print(f"  MAE mensal (peças):  {m_bneg['MAE']:7.2f}   |  {m_zinb['MAE']:7.2f}")
+print(f"  RMSE mensal (peças): {m_bneg['RMSE']:7.2f}   |  {m_zinb['RMSE']:7.2f}")
+print(f"  WAPE:                {m_bneg['WAPE']:7.2%}   |  {m_zinb['WAPE']:7.2%}")
+print(f"  Viés:                {m_bneg['Viés']:+7.2%}   |  {m_zinb['Viés']:+7.2%}")
+print()
+print(mensal.round(1).to_string())
+
 #%% SÈRIES TEMPORAIS
 
 vendas_4_st = vendas_4[['familia', 'vendas', 'data']].copy() # Filtra e extrai apenas as colunas necessárias do DataFrame principal
-vendas_4_st['data'] = pd.to_datetime(vendas_4_st['data']) # Converte a coluna de data para o formato datetime do Pandas
+vendas_4_st['data'] = pd.to_datetime(vendas_4_st['data'], dayfirst=True) # Converte a coluna de data para o formato datetime do Pandas
 vendas_4_st['ano'] = vendas_4_st['data'].dt.year # Extrai o ano para colunas específicas
 vendas_4_st['mes'] = vendas_4_st['data'].dt.month # Extrai o mês para colunas específicas
 vendas_4_st = vendas_4_st[
@@ -1642,6 +1804,16 @@ vendas_4_st = (
     .sum()
 ) # Agrupa as vendas por ano e mês, somando o total vendido no período
 
+#%% TESTES DE ESTACIONARIEDADE
+from statsmodels.tsa.stattools import adfuller, kpss
+
+p_adf = adfuller(vendas_4_st['vendas'])[1] # H0 do ADF: a série NÃO é estacionária.
+p_kpss = kpss(vendas_4_st['vendas'], regression='c', nlags='auto')[1] # H0 do KPSS: a série É estacionária.
+
+print("===== TESTES DE ESTACIONARIEDADE =====")
+print(f"  ADF  p-valor: {p_adf:.4f}  ({'estacionária' if p_adf < 0.05 else 'não estacionária'})")
+print(f"  KPSS p-valor: {'> 0,10' if p_kpss >= 0.1 else f'{p_kpss:.4f}'}  ({'estacionária' if p_kpss >= 0.05 else 'não estacionária'})") # O KPSS só tabela p-valores até 0,10.
+
 #%% MODELAGEM E PREVISÃO COM AUTO-ARIMA
 from pmdarima import auto_arima
 
@@ -1657,6 +1829,8 @@ resultado = auto_arima(
     max_P=2, max_Q=2          # Limite superior dos parâmetros sazonais
 )
 print(resultado.summary()) # Exibe o resumo do modelo SARIMA final ajustado com todos os dados
+
+print(f"Modelo final: SARIMA{resultado.order}{resultado.seasonal_order[:3]}_{resultado.seasonal_order[3]}") # Notação SARIMA(p,d,q)(P,D,Q)_m.
 
 previsao = resultado.predict(
     n_periods=12, 
@@ -1689,8 +1863,8 @@ valores_previstos, intervalos_conf = resultado_teste.predict(
 mape = mean_absolute_percentage_error(dados_teste_reais, valores_previstos) # Calcula o MAPE (Erro Percentual Absoluto Médio)
 
 print("\n--- AVALIAÇÃO DO MODELO ---")
+print(f"Modelo de teste: SARIMA{resultado_teste.order}{resultado_teste.seasonal_order[:3]}_{resultado_teste.seasonal_order[3]}")
 print(f"MAPE: {mape * 100:.2f}%")
-print(f"Precisão do Modelo (Acurácia): {100 - (mape * 100):.2f}%")
 
 mae = mean_absolute_error(dados_teste_reais, valores_previstos) # Calcula o MAE (Erro Absoluto Médio)
 
@@ -1701,7 +1875,28 @@ rmse = root_mean_squared_error(dados_teste_reais, valores_previstos)# Calcula o 
 
 print(f"O RMSE do modelo é: {rmse:.2f}")
 
+# Benchmark ingênuo sazonal: a previsão de cada mês é o valor do mesmo mês do ano anterior.
+previsto_ingenuo = dados_treino.iloc[-12:].values # Últimos 12 meses do treino repetidos.
+
+mae_ingenuo = mean_absolute_error(dados_teste_reais, previsto_ingenuo) # MAE do benchmark.
+rmse_ingenuo = root_mean_squared_error(dados_teste_reais, previsto_ingenuo) # RMSE do benchmark.
+mape_ingenuo = mean_absolute_percentage_error(dados_teste_reais, previsto_ingenuo) # MAPE do benchmark.
+
+escala = np.mean(np.abs(dados_treino.values[12:] - dados_treino.values[:-12])) # Erro médio do ingênuo sazonal dentro do treino.
+mase = mae / escala # MASE: abaixo de 1, o SARIMA é melhor que o ingênuo sazonal.
+wape = np.abs(dados_teste_reais.values - valores_previstos).sum() / dados_teste_reais.sum() # WAPE do SARIMA.
+
+print("\n--- COMPARAÇÃO COM O BENCHMARK INGÊNUO SAZONAL ---")
+print(f"                 SARIMA   |   Ingênuo sazonal")
+print(f"  MAE:        {mae:8.2f}   |   {mae_ingenuo:8.2f}")
+print(f"  RMSE:       {rmse:8.2f}   |   {rmse_ingenuo:8.2f}")
+print(f"  MAPE:       {mape * 100:7.2f}%   |   {mape_ingenuo * 100:7.2f}%")
+print(f"  MASE:       {mase:8.2f}")
+print(f"  WAPE:       {wape * 100:7.2f}%")
+
 #%% PREVISÕES E EXIBIÇÃO DE RESULTADOS
+
+dezembro = clima_mensal[clima_mensal['mes'] == 12][['temperatura', 'precipitacao']].mean() # Médias climáticas históricas de dezembro.
 
 # Dicionário com um novo cenário hipotético de produto para realizar predição
 prev = {
@@ -1712,13 +1907,18 @@ prev = {
         'preco': [79],
         'desconto': [0],
         'mes': [12],
-        'temperatura': [26],
-        'precipitacao': [0.05]
+        'temperatura': [dezembro['temperatura']], # Temperatura média histórica de dezembro (ºC). Ignorada caso a temperatura esteja fora da fórmula.
+        'precipitacao': [dezembro['precipitacao']] # Precipitação média diária histórica de dezembro (mm/dia).
         }
 
-resultado = modelo_bneg.predict(prev) # Faz a previsão pontual utilizando o modelo Binomial Negativo (BNeg) pré-treinado
+prev = pd.DataFrame(prev) # Converte o cenário em DataFrame.
 
-print(resultado)
+previsao_bneg = modelo_bneg.predict(prev) # Previsão pontual com o BNEG.
+previsao_zinb = modelo_zinb.predict(prev, exog_infl=sm.add_constant(prev[['preco']], has_constant='add')) # Previsão pontual com o ZINB.
+
+print(f"Clima de dezembro usado: {dezembro['temperatura']:.1f} ºC | {dezembro['precipitacao']:.2f} mm/dia")
+print(f"Previsão BNEG: {previsao_bneg.iloc[0]:.2f} peças")
+print(f"Previsão ZINB: {previsao_zinb.iloc[0]:.2f} peças")
 
 valores, intervalos = previsao # Desempacota a previsão feita anteriormente com a série temporal (auto_arima)
 
